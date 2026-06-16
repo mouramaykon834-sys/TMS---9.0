@@ -5095,7 +5095,64 @@ window.preencherPlacaChecklist = function() {
     document.getElementById('import-result-area').style.display = 'none';
   }
 
-  window.confirmarImportacao = async function() {
+  
+  // ============================================
+  // SINCRONIZAR MOTORISTAS SUPABASE → FIREBASE
+  // ============================================
+  async function syncMotoristasSupabaseParaFirebase() {
+    try {
+      mostrarToast('Sincronizando com Firebase...', 'info');
+
+      // Buscar motoristas do Supabase
+      const { data: motoristasSupabase, error } = await supabase
+        .from('motoristas')
+        .select('id,nome,cpf,placa,operador_id,status,score,created_at')
+        .order('created_at', { ascending: false })
+        .limit(100);
+
+      if (error || !motoristasSupabase) {
+        console.warn('Erro ao buscar motoristas do Supabase:', error);
+        return;
+      }
+
+      // Buscar operadores do Supabase para mapear nome
+      const { data: operadores } = await supabase
+        .from('usuarios')
+        .select('id,nome')
+        .in('role', ['master', 'operador']);
+
+      const opMap = {};
+      if (operadores) operadores.forEach(o => opMap[o.id] = o.nome);
+
+      // Para cada motorista do Supabase, verificar se já existe no Firebase
+      let syncCount = 0;
+      for (const m of motoristasSupabase) {
+        // Verificar se já existe no Firebase pela placa
+        const placaExiste = motoristas.some(fm => fm.placa === m.placa);
+        if (!placaExiste) {
+          // Adicionar no Firebase
+          await addDoc(collection(db, "motoristas"), {
+            nome: m.nome,
+            cpf: m.cpf || '',
+            placa: m.placa,
+            operador: opMap[m.operador_id] || 'N/A',
+            status: m.status || 'ativo',
+            score: m.score || 100
+          });
+          syncCount++;
+        }
+      }
+
+      if (syncCount > 0) {
+        mostrarToast(`${syncCount} motorista(s) sincronizado(s) com Firebase!`, 'success');
+      }
+    } catch (e) {
+      console.error('Erro ao sincronizar com Firebase:', e);
+      mostrarToast('Importação no Supabase OK, mas sync com Firebase falhou. Recarregue a página.', 'warning');
+    }
+  }
+
+window.confirmarImportacao = async function() {
     const validos = importDados.filter(d => d._valido);
     if (!validos.length) {
       mostrarToast('Nenhum registro válido para importar!', 'error');
@@ -5232,6 +5289,11 @@ window.preencherPlacaChecklist = function() {
     `;
 
     mostrarToast(`Importação concluída! ${res.sucesso} sucesso, ${res.falhas} falhas.`, res.falhas === 0 ? 'success' : 'info');
+
+    // SINCRONIZAR SUPABASE → FIREBASE (para sistema legado ver os dados)
+    if (res.sucesso > 0 && importTipo === 'motoristas') {
+      await syncMotoristasSupabaseParaFirebase();
+    }
 
     await registrarLog('importacao_massa', importTipo, `Importados ${res.sucesso} registros via planilha`, '');
   };
