@@ -4526,6 +4526,10 @@
     carregarLogo();
     registrarLoginUsuario();
     initNotifications(); // 🔔 INICIALIZAR NOTIFICAÇÕES
+    
+    // Sincronizar usuário com Supabase para importação
+    await syncUsuarioSupabase();
+    
     mostrarToast(`Bem-vindo, ${currentUser.nome}!`, 'success');
   }
 
@@ -5038,37 +5042,16 @@ window.preencherPlacaChecklist = function() {
       return;
     }
 
-    // Buscar UUID de QUALQUER usuário no Supabase para auditoria
-    // (o usuário do Firebase não precisa existir no Supabase)
-    let supabaseUserId = null;
-    try {
-      // Buscar qualquer usuário (preferencialmente master)
-      let { data: users } = await supabase
-        .from('usuarios')
-        .select('id,username,role')
-        .order('role', { ascending: false })  // master primeiro
-        .limit(1);
+    // Usar UUID do Supabase sincronizado no login
+    let supabaseUserId = currentUser?.supabaseId || null;
 
-      if (users && users.length > 0) {
-        supabaseUserId = users[0].id;
-        console.log('Usando usuário Supabase para importação:', users[0]);
-      } else {
-        // Se não achou nenhum, tenta sem ordenação
-        let { data: anyUser } = await supabase
-          .from('usuarios')
-          .select('id')
-          .limit(1);
-
-        if (anyUser && anyUser.length > 0) {
-          supabaseUserId = anyUser[0].id;
-        }
-      }
-    } catch (e) {
-      console.error('Erro ao buscar usuário Supabase:', e);
+    // Se não tem ainda, tenta sincronizar agora
+    if (!supabaseUserId) {
+      supabaseUserId = await syncUsuarioSupabase();
     }
 
     if (!supabaseUserId) {
-      mostrarToast('Erro: tabela usuários do Supabase está vazia. Execute o script SQL de setup primeiro.', 'error');
+      mostrarToast('Erro: usuário não sincronizado com Supabase. Faça logout e login novamente.', 'error');
       return;
     }
 
@@ -5197,6 +5180,35 @@ window.preencherPlacaChecklist = function() {
       document.getElementById('page-importacao').classList.add('active');
     }
   };
+
+
+  // ============================================
+  // SINCRONIZAÇÃO SUPABASE (Firebase → Supabase)
+  // ============================================
+  async function syncUsuarioSupabase() {
+    if (!currentUser || !supabase) return null;
+    try {
+      const { data, error } = await supabase.rpc('sync_usuario_firebase', {
+        p_username: currentUser.username || currentUser.nome?.toLowerCase().replace(/\s+/g, '_') || 'admin',
+        p_nome: currentUser.nome || currentUser.username || 'Usuário',
+        p_role: currentUser.role || 'consultor'
+      });
+
+      if (error) {
+        console.error('Erro sync Supabase:', error);
+        return null;
+      }
+
+      if (data && data.id) {
+        currentUser.supabaseId = data.id;
+        console.log('Usuário sincronizado com Supabase:', data);
+        return data.id;
+      }
+    } catch (e) {
+      console.error('Exceção sync Supabase:', e);
+    }
+    return null;
+  }
 
 checkSession();
 </script>
