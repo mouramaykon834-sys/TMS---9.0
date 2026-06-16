@@ -5066,8 +5066,13 @@ window.preencherPlacaChecklist = function() {
 
     const validos = dados.filter(d => d._valido).length;
     const invalidos = dados.filter(d => !d._valido).length;
+    const warnings = dados.filter(d => d._warning).length;
 
-    stats.innerHTML = `<span style="color:var(--green)">✅ ${validos} válidos</span> | <span style="color:var(--red)">❌ ${invalidos} com erro</span> | Total: ${dados.length}`;
+    let statsHtml = `<span style="color:var(--green)">✅ ${validos} válidos</span>`;
+    if (invalidos > 0) statsHtml += ` | <span style="color:var(--red)">❌ ${invalidos} com erro</span>`;
+    if (warnings > 0) statsHtml += ` | <span style="color:var(--yellow)">⚠️ ${warnings} avisos</span>`;
+    statsHtml += ` | Total: ${dados.length}`;
+    stats.innerHTML = statsHtml;
 
     const thead = table.querySelector('thead');
     const tbody = table.querySelector('tbody');
@@ -5075,9 +5080,14 @@ window.preencherPlacaChecklist = function() {
     thead.innerHTML = '<tr>' + headers.map(h => `<th>${h}</th>`).join('') + '<th>Status</th></tr>';
 
     tbody.innerHTML = dados.map(d => {
-      const status = d._valido 
-        ? '<span style="color:var(--green)">✅ OK</span>' 
-        : `<span style="color:var(--red)">❌ ${d._erro}</span>`;
+      let status = '';
+      if (!d._valido) {
+        status = `<span style="color:var(--red)">❌ ${d._erro}</span>`;
+      } else if (d._warning) {
+        status = `<span style="color:var(--yellow)">⚠️ ${d._warning}</span>`;
+      } else {
+        status = '<span style="color:var(--green)">✅ OK</span>';
+      }
       return '<tr>' + headers.map(h => `<td>${d[h] || ''}</td>`).join('') + `<td>${status}</td></tr>`;
     }).join('');
 
@@ -5115,9 +5125,20 @@ window.preencherPlacaChecklist = function() {
     let payload = [];
 
     if (importTipo === 'motoristas') {
+      // Buscar operadores do Supabase
       const { data: usuarios } = await supabase.from('usuarios').select('id,nome,username').in('role', ['master','operador']);
       const operadorMap = {};
-      if (usuarios) usuarios.forEach(u => { operadorMap[u.nome.toLowerCase()] = u.id; if (u.username) operadorMap[u.username.toLowerCase()] = u.id; });
+      if (usuarios) usuarios.forEach(u => { 
+        operadorMap[u.nome.toLowerCase()] = u.id; 
+        if (u.username) operadorMap[u.username.toLowerCase()] = u.id; 
+      });
+
+      // Adicionar warnings no preview se operador não encontrado
+      validos.forEach(d => {
+        if (d.operador && d.operador.trim() && !operadorMap[d.operador.toLowerCase()]) {
+          d._warning = `Operador "${d.operador}" não encontrado. Será importado sem operador.`;
+        }
+      });
 
       payload = validos.map(d => ({
         nome: d.nome,
@@ -5191,11 +5212,23 @@ window.preencherPlacaChecklist = function() {
     }
 
     const res = data;
+
+    // Montar lista detalhada de erros
+    let errosHtml = '';
+    if (res.falhas > 0 && res.detalhes) {
+      const erros = res.detalhes.filter(d => d.status === 'erro');
+      if (erros.length > 0) {
+        errosHtml = '<div style="margin-top:12px; max-height:250px; overflow-y:auto; border:1px solid var(--border); border-radius:4px; padding:12px;"><strong style="color:var(--red)">❌ Detalhes das falhas:</strong><br><br>' + 
+          erros.map(d => `<div style="margin-bottom:8px; padding:6px; background:var(--red-bg); border-radius:4px;"><strong>${d.nome || 'N/A'}</strong><br><span style="color:var(--red); font-size:11px;">${d.erro}</span></div>`).join('') + 
+          '</div>';
+      }
+    }
+
     resultContent.innerHTML = `
       <div style="margin-bottom:8px;"><strong>Total processado:</strong> ${res.total}</div>
       <div style="color:var(--green); margin-bottom:8px;">✅ Sucesso: ${res.sucesso}</div>
       <div style="color:var(--red); margin-bottom:8px;">❌ Falhas: ${res.falhas}</div>
-      ${res.falhas > 0 ? '<div style="margin-top:8px; max-height:200px; overflow-y:auto;"><strong>Detalhes das falhas:</strong><br>' + (res.detalhes || []).filter(d => d.status === 'erro').map(d => `• ${d.nome || 'N/A'}: ${d.erro}`).join('<br>') + '</div>' : ''}
+      ${errosHtml}
     `;
 
     mostrarToast(`Importação concluída! ${res.sucesso} sucesso, ${res.falhas} falhas.`, res.falhas === 0 ? 'success' : 'info');
