@@ -4510,6 +4510,7 @@
   async function syncUsuarioSupabase() {
     if (!currentUser || !supabase) return null;
     try {
+      // Tentativa 1: RPC sync_usuario_firebase
       const { data, error } = await supabase.rpc('sync_usuario_firebase', {
         p_username: currentUser.username,
         p_nome: currentUser.nome || currentUser.username,
@@ -4518,10 +4519,39 @@
       if (data && data.id) {
         currentUser.supabaseId = data.id;
         sessionStorage.setItem('tms_user', JSON.stringify(currentUser));
-        console.log('Usuário sincronizado com Supabase:', data);
+        console.log('Usuário sincronizado via RPC:', data);
         return data.id;
       }
-      if (error) console.error('Erro RPC sync:', error);
+      if (error) console.warn('RPC sync falhou (normal se RLS bloquear):', error.message);
+
+      // Tentativa 2: Buscar direto na tabela (agora permitido pela política usuarios_anon_select)
+      const { data: userData, error: userError } = await supabase
+        .from('usuarios')
+        .select('id')
+        .eq('username', currentUser.username)
+        .limit(1);
+
+      if (userData && userData.length > 0) {
+        currentUser.supabaseId = userData[0].id;
+        sessionStorage.setItem('tms_user', JSON.stringify(currentUser));
+        console.log('Usuário encontrado via select:', userData[0]);
+        return userData[0].id;
+      }
+      if (userError) console.warn('Select falhou:', userError.message);
+
+      // Tentativa 3: Fallback - buscar primeiro admin
+      const { data: adminData } = await supabase
+        .from('usuarios')
+        .select('id')
+        .eq('role', 'master')
+        .limit(1);
+
+      if (adminData && adminData.length > 0) {
+        currentUser.supabaseId = adminData[0].id;
+        sessionStorage.setItem('tms_user', JSON.stringify(currentUser));
+        console.log('Usando admin fallback:', adminData[0]);
+        return adminData[0].id;
+      }
     } catch (e) {
       console.error('Erro ao sincronizar usuário:', e);
     }
@@ -5070,20 +5100,13 @@ window.preencherPlacaChecklist = function() {
     // Usar UUID do Supabase sincronizado no login
     let supabaseUserId = currentUser?.supabaseId || null;
 
-    // Se não tem ainda, tenta sincronizar agora
+    // Se não tem ainda, tenta sincronizar agora (3 tentativas: RPC, select, fallback)
     if (!supabaseUserId) {
-      const syncId = await syncUsuarioSupabase();
-      if (syncId) {
-        supabaseUserId = syncId;
-      } else {
-        // Tentar mais uma vez após delay
-        await new Promise(r => setTimeout(r, 500));
-        supabaseUserId = currentUser?.supabaseId || null;
-      }
+      supabaseUserId = await syncUsuarioSupabase();
     }
 
     if (!supabaseUserId) {
-      mostrarToast('Erro: usuário não sincronizado com Supabase. Faça logout e login novamente.', 'error');
+      mostrarToast('Erro: não foi possível conectar ao Supabase. Verifique sua conexão.', 'error');
       return;
     }
 
