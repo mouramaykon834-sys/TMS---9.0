@@ -4507,6 +4507,27 @@
     } catch (e) { console.warn("Erro ao registrar login:", e); }
   }
 
+  async function syncUsuarioSupabase() {
+    if (!currentUser || !supabase) return null;
+    try {
+      const { data, error } = await supabase.rpc('sync_usuario_firebase', {
+        p_username: currentUser.username,
+        p_nome: currentUser.nome || currentUser.username,
+        p_role: currentUser.role
+      });
+      if (data && data.id) {
+        currentUser.supabaseId = data.id;
+        sessionStorage.setItem('tms_user', JSON.stringify(currentUser));
+        console.log('Usuário sincronizado com Supabase:', data);
+        return data.id;
+      }
+      if (error) console.error('Erro RPC sync:', error);
+    } catch (e) {
+      console.error('Erro ao sincronizar usuário:', e);
+    }
+    return null;
+  }
+
   function finalizarLogin(userDoc, user) {
     currentUser = { id: userDoc.id, username: user.username, nome: user.nome || user.username, role: user.role };
     sessionStorage.setItem('tms_user', JSON.stringify(currentUser));
@@ -4813,6 +4834,10 @@ window.preencherPlacaChecklist = function() {
     const savedUser = sessionStorage.getItem('tms_user');
     if (savedUser) {
       currentUser = JSON.parse(savedUser);
+      // Recuperar supabaseId se existir
+      if (currentUser.supabaseId) {
+        console.log('SupabaseId recuperado da sessão:', currentUser.supabaseId);
+      }
       try {
         const userDoc = await getDoc(doc(db, "usuarios", currentUser.id));
         if (userDoc.exists()) {
@@ -5047,7 +5072,14 @@ window.preencherPlacaChecklist = function() {
 
     // Se não tem ainda, tenta sincronizar agora
     if (!supabaseUserId) {
-      supabaseUserId = await syncUsuarioSupabase();
+      const syncId = await syncUsuarioSupabase();
+      if (syncId) {
+        supabaseUserId = syncId;
+      } else {
+        // Tentar mais uma vez após delay
+        await new Promise(r => setTimeout(r, 500));
+        supabaseUserId = currentUser?.supabaseId || null;
+      }
     }
 
     if (!supabaseUserId) {
