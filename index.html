@@ -5041,29 +5041,47 @@ window.preencherPlacaChecklist = function() {
     // Buscar UUID do usuário no Supabase (Firebase ID não é UUID válido)
     let supabaseUserId = null;
     try {
-      const { data: userData, error: userError } = await supabase
+      // Tentativa 1: pelo username exato
+      let { data: userData, error: userError } = await supabase
         .from('usuarios')
-        .select('id')
-        .eq('username', currentUser.username)
-        .single();
+        .select('id,username,nome')
+        .eq('username', currentUser.username || '')
+        .limit(1);
 
-      if (userError || !userData) {
-        // Se não encontrou pelo username, busca o admin padrão
-        const { data: adminData } = await supabase
-          .from('usuarios')
-          .select('id')
-          .eq('username', 'admin')
-          .single();
-        if (adminData) supabaseUserId = adminData.id;
+      if (userData && userData.length > 0) {
+        supabaseUserId = userData[0].id;
+        console.log('Usuário Supabase encontrado pelo username:', userData[0]);
       } else {
-        supabaseUserId = userData.id;
+        // Tentativa 2: pelo nome
+        let { data: userData2 } = await supabase
+          .from('usuarios')
+          .select('id,username,nome')
+          .ilike('nome', currentUser.nome || '')
+          .limit(1);
+
+        if (userData2 && userData2.length > 0) {
+          supabaseUserId = userData2[0].id;
+          console.log('Usuário Supabase encontrado pelo nome:', userData2[0]);
+        } else {
+          // Tentativa 3: usar o primeiro master disponível
+          let { data: masters } = await supabase
+            .from('usuarios')
+            .select('id,username,nome,role')
+            .eq('role', 'master')
+            .limit(1);
+
+          if (masters && masters.length > 0) {
+            supabaseUserId = masters[0].id;
+            console.log('Usando master padrão do Supabase:', masters[0]);
+          }
+        }
       }
     } catch (e) {
       console.error('Erro ao buscar usuário Supabase:', e);
     }
 
     if (!supabaseUserId) {
-      mostrarToast('Erro: usuário não sincronizado com Supabase. Entre em contato.', 'error');
+      mostrarToast('Erro: não foi possível identificar usuário no Supabase. Verifique se os usuários padrão foram criados.', 'error');
       return;
     }
 
