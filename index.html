@@ -5038,6 +5038,35 @@ window.preencherPlacaChecklist = function() {
       return;
     }
 
+    // Buscar UUID do usuário no Supabase (Firebase ID não é UUID válido)
+    let supabaseUserId = null;
+    try {
+      const { data: userData, error: userError } = await supabase
+        .from('usuarios')
+        .select('id')
+        .eq('username', currentUser.username)
+        .single();
+
+      if (userError || !userData) {
+        // Se não encontrou pelo username, busca o admin padrão
+        const { data: adminData } = await supabase
+          .from('usuarios')
+          .select('id')
+          .eq('username', 'admin')
+          .single();
+        if (adminData) supabaseUserId = adminData.id;
+      } else {
+        supabaseUserId = userData.id;
+      }
+    } catch (e) {
+      console.error('Erro ao buscar usuário Supabase:', e);
+    }
+
+    if (!supabaseUserId) {
+      mostrarToast('Erro: usuário não sincronizado com Supabase. Entre em contato.', 'error');
+      return;
+    }
+
     mostrarToast(`Importando ${validos.length} registros...`, 'info');
 
     let payload = [];
@@ -5105,7 +5134,7 @@ window.preencherPlacaChecklist = function() {
     const funcName = `importar_${importTipo}`;
     const { data, error } = await supabase.rpc(funcName, {
       dados: payload,
-      usuario_id: currentUser.id
+      usuario_id: supabaseUserId
     });
 
     const resultArea = document.getElementById('import-result-area');
