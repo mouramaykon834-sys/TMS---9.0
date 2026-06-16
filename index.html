@@ -5038,42 +5038,29 @@ window.preencherPlacaChecklist = function() {
       return;
     }
 
-    // Buscar UUID do usuário no Supabase (Firebase ID não é UUID válido)
+    // Buscar UUID de QUALQUER usuário no Supabase para auditoria
+    // (o usuário do Firebase não precisa existir no Supabase)
     let supabaseUserId = null;
     try {
-      // Tentativa 1: pelo username exato
-      let { data: userData, error: userError } = await supabase
+      // Buscar qualquer usuário (preferencialmente master)
+      let { data: users } = await supabase
         .from('usuarios')
-        .select('id,username,nome')
-        .eq('username', currentUser.username || '')
+        .select('id,username,role')
+        .order('role', { ascending: false })  // master primeiro
         .limit(1);
 
-      if (userData && userData.length > 0) {
-        supabaseUserId = userData[0].id;
-        console.log('Usuário Supabase encontrado pelo username:', userData[0]);
+      if (users && users.length > 0) {
+        supabaseUserId = users[0].id;
+        console.log('Usando usuário Supabase para importação:', users[0]);
       } else {
-        // Tentativa 2: pelo nome
-        let { data: userData2 } = await supabase
+        // Se não achou nenhum, tenta sem ordenação
+        let { data: anyUser } = await supabase
           .from('usuarios')
-          .select('id,username,nome')
-          .ilike('nome', currentUser.nome || '')
+          .select('id')
           .limit(1);
 
-        if (userData2 && userData2.length > 0) {
-          supabaseUserId = userData2[0].id;
-          console.log('Usuário Supabase encontrado pelo nome:', userData2[0]);
-        } else {
-          // Tentativa 3: usar o primeiro master disponível
-          let { data: masters } = await supabase
-            .from('usuarios')
-            .select('id,username,nome,role')
-            .eq('role', 'master')
-            .limit(1);
-
-          if (masters && masters.length > 0) {
-            supabaseUserId = masters[0].id;
-            console.log('Usando master padrão do Supabase:', masters[0]);
-          }
+        if (anyUser && anyUser.length > 0) {
+          supabaseUserId = anyUser[0].id;
         }
       }
     } catch (e) {
@@ -5081,7 +5068,7 @@ window.preencherPlacaChecklist = function() {
     }
 
     if (!supabaseUserId) {
-      mostrarToast('Erro: não foi possível identificar usuário no Supabase. Verifique se os usuários padrão foram criados.', 'error');
+      mostrarToast('Erro: tabela usuários do Supabase está vazia. Execute o script SQL de setup primeiro.', 'error');
       return;
     }
 
